@@ -453,6 +453,7 @@ function refreshHighlight() {
 }
 
 /* ---------------- reading engine ---------------- */
+let speakTimer = null, lastCancelTs = 0;
 function startReading(pageIdx, blockIdx, sentIdx = 0) {
   stopUtterance();
   state.reading = { page: pageIdx, block: blockIdx, sentence: sentIdx };
@@ -463,14 +464,19 @@ function startReading(pageIdx, blockIdx, sentIdx = 0) {
   speakCurrent();
 }
 function speakCurrent() {
+  clearTimeout(speakTimer);
   const r = state.reading;
-  if (!r) return;
+  if (!r || !state.playing) return;
   const rec = state.pages[r.page];
-  if (!rec.blocks) { setTimeout(speakCurrent, 150); return; } // extraction still running
+  if (!rec.blocks) { speakTimer = setTimeout(speakCurrent, 150); return; } // extraction still running
   const b = rec.blocks[r.block];
   if (!b || !b.sentences[r.sentence]) { advance(); return; }
+  // Edge silently swallows a speak() issued too soon after cancel() (rapid re-clicks) — wait out the window
+  const since = Date.now() - lastCancelTs;
+  if (since < 220) { speakTimer = setTimeout(speakCurrent, 230 - since); return; }
   refreshHighlight();
-  const u = new SpeechSynthesisUtterance(b.sentences[r.sentence].text);
+  const text = b.sentences[r.sentence].text;
+  const u = new SpeechSynthesisUtterance(text);
   const v = currentVoice();
   if (v) u.voice = v;
   u.rate = parseFloat($('rate').value);
@@ -479,6 +485,7 @@ function speakCurrent() {
   // stop the flow on an error event alone
   let done = false, sawSpeaking = false;
   const started = Date.now();
+  const maxMs = 5000 + (text.length * 95) / (u.rate || 1); // ceiling for a zombie 'speaking' flag
   const finish = ok => {
     if (done || state.utter !== u) return;
     done = true;
@@ -492,7 +499,15 @@ function speakCurrent() {
   };
   const watch = setInterval(() => {
     if (done || state.utter !== u) { clearInterval(watch); return; }
-    if (speechSynthesis.speaking) sawSpeaking = true;
+    if (speechSynthesis.speaking) {
+      sawSpeaking = true;
+      if (Date.now() - started > maxMs) { // zombie: 'speaking' stuck true after heavy cancel use
+        done = true;
+        clearInterval(watch);
+        stopUtterance();
+        if (state.playing && state.reading) advance();
+      }
+    }
     else if (sawSpeaking) finish(true);                 // audio played and ended (onend was dropped)
     else if (Date.now() - started > 7000) finish(false); // never started
   }, 400);
@@ -543,6 +558,8 @@ function moveBlock(dir) {
 }
 function stopUtterance() {
   state.utter = null;
+  clearTimeout(speakTimer);
+  lastCancelTs = Date.now();
   try { speechSynthesis.cancel(); } catch (e) {}
 }
 function pauseReading() {
