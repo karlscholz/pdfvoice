@@ -394,23 +394,30 @@ async function extractBlocks(rec) {
   // of different columns interleave in reading order of the lines array
   lines.sort((a, b) => a.base - b.base || a.x0 - b.x0);
   const med = median(lines.map(l => l.h));
+  const capRe = /^(figure|fig\.|table|algorithm|listing)\s*\d/i;
+  for (const ln of lines) ln.cap = capRe.test(ln.runs.map(r => r.str).join(' ').trim());
   const blocks = [];
   for (const ln of lines) {
     let home = null;
-    for (let i = blocks.length - 1; i >= 0 && i >= blocks.length - 12; i--) {
-      const b = blocks[i];
-      const last = b.lines[b.lines.length - 1];
-      const gap = ln.top - (last.top + last.h);
-      if (gap > med * 0.9 || gap < -med * 0.6) continue;
-      if (Math.abs(ln.h - last.h) > 0.22 * Math.max(ln.h, last.h)) continue; // font-size change = new block (e.g. caption vs body)
-      const overlap = Math.min(b.x1, ln.x1) - Math.max(b.x0, ln.x0);
-      if (overlap > 0.5 * Math.min(b.x1 - b.x0, ln.x1 - ln.x0)) { home = b; break; }
+    if (!ln.cap) { // a caption start always opens its own block
+      for (let i = blocks.length - 1; i >= 0 && i >= blocks.length - 12; i--) {
+        const b = blocks[i];
+        const last = b.lines[b.lines.length - 1];
+        const gap = ln.top - (last.top + last.h);
+        if (gap > med * 0.9 || gap < -med * 0.6) continue;
+        // caption blocks only keep lines of their own font size (captions run
+        // ~10% smaller than body, which the general tolerance would merge)
+        const hTol = b.cap ? 0.06 : 0.12;
+        if (Math.abs(ln.h - last.h) > hTol * Math.max(ln.h, last.h)) continue;
+        const overlap = Math.min(b.x1, ln.x1) - Math.max(b.x0, ln.x0);
+        if (overlap > 0.5 * Math.min(b.x1 - b.x0, ln.x1 - ln.x0)) { home = b; break; }
+      }
     }
     if (home) {
       home.lines.push(ln);
       home.x0 = Math.min(home.x0, ln.x0); home.x1 = Math.max(home.x1, ln.x1);
     } else {
-      blocks.push({ lines: [ln], x0: ln.x0, x1: ln.x1 });
+      blocks.push({ lines: [ln], x0: ln.x0, x1: ln.x1, cap: ln.cap });
     }
   }
 
@@ -461,6 +468,28 @@ async function extractBlocks(rec) {
   }
   flushBand();
 
+  // classify auxiliary blocks (auto-flow skips them): captions, footnotes,
+  // page numbers, running heads — anything that isn't the main body text
+  const weight = new Map();
+  for (const b of ordered) for (const ln of b.lines) {
+    const key = Math.round(ln.h * 2) / 2;
+    const len = ln.runs.reduce((s, r) => s + r.str.length, 0);
+    weight.set(key, (weight.get(key) || 0) + len);
+  }
+  let bodyH = 0, bw = -1;
+  for (const [h, w] of weight) if (w > bw) { bw = w; bodyH = h; }
+  for (const b of ordered) {
+    const bh = median(b.lines.map(l => l.h));
+    const strip = b.text.replace(/[^A-Za-z0-9]/g, '');
+    b.aux =
+      b.cap ||                                                             // caption blocks
+      /^(figure|fig\.|table|algorithm|listing)\s*\d/i.test(b.text) ||      // captions
+      bh < bodyH * 0.92 ||                                                 // smaller font: footnotes etc.
+      (/^\d+$/.test(strip) && strip.length <= 4) ||                        // bare page numbers
+      (rec.num > 1 && b.lines.length === 1 && b.top < vp.height * 0.07 &&  // running head
+        bh <= bodyH * 1.05 && (b.x1 - b.x0) < vp.width * 0.7);
+  }
+
   rec.blocks = ordered;
   buildOverlays(rec);
 }
@@ -497,9 +526,9 @@ function buildOverlays(rec) {
   for (const el of rec.wrap.querySelectorAll('.blk')) el.remove();
   rec.blocks.forEach((b, bi) => {
     const d = document.createElement('div');
-    d.className = 'blk';
+    d.className = b.aux ? 'blk aux' : 'blk';
     d.dataset.b = bi;
-    d.title = 'Read from here';
+    d.title = b.aux ? 'Read this (auto-flow skips it)' : 'Read from here';
     d.onclick = e => {
       const y = (e.clientY - rec.wrap.getBoundingClientRect().top) / state.scale;
       startReading(rec.num - 1, bi, sentenceAtY(b, y));
@@ -569,7 +598,7 @@ function refreshHighlight() {
 let speakTimer = null, lastCancelTs = 0;
 function startReading(pageIdx, blockIdx, sentIdx = 0) {
   stopUtterance();
-  state.reading = { page: pageIdx, block: blockIdx, sentence: sentIdx };
+  state.reading = { page: pageIdx, block: blockIdx, sentence: sentIdx, flow: false };
   state.silentStreak = 0;
   state.playing = true;
   state.userScrolled = false;
@@ -585,6 +614,7 @@ function speakCurrent() {
   if (!rec.blocks) { speakTimer = setTimeout(speakCurrent, 150); return; } // extraction still running
   const b = rec.blocks[r.block];
   if (!b || !b.sentences[r.sentence]) { advance(); return; }
+  if (b.aux && r.flow) { advance(); return; } // auto-flow skips captions/footnotes/page furniture
   // Edge silently swallows a speak() issued too soon after cancel() (rapid re-clicks) — wait out the window
   const since = Date.now() - lastCancelTs;
   if (since < 220) { speakTimer = setTimeout(speakCurrent, 230 - since); return; }
@@ -638,8 +668,8 @@ function advance() {
   const rec = state.pages[r.page];
   const b = rec.blocks[r.block];
   if (b && r.sentence + 1 < b.sentences.length) r.sentence++;
-  else if (rec.blocks && r.block + 1 < rec.blocks.length) { r.block++; r.sentence = 0; }
-  else if (r.page + 1 < state.pages.length) { r.page++; r.block = 0; r.sentence = 0; }
+  else if (rec.blocks && r.block + 1 < rec.blocks.length) { r.block++; r.sentence = 0; r.flow = true; }
+  else if (r.page + 1 < state.pages.length) { r.page++; r.block = 0; r.sentence = 0; r.flow = true; }
   else { finish(); return; }
   saveResume();
   if (state.playing) speakCurrent();
@@ -648,27 +678,42 @@ function advance() {
 function retreat() {
   const r = state.reading;
   if (!r) return;
-  if (r.sentence > 0) r.sentence--;
-  else if (r.block > 0) { r.block--; r.sentence = Math.max(0, (state.pages[r.page].blocks[r.block].sentences.length || 1) - 1); }
-  else if (r.page > 0) {
-    r.page--;
-    const bl = state.pages[r.page].blocks || [];
-    r.block = Math.max(0, bl.length - 1);
-    r.sentence = bl.length ? Math.max(0, bl[r.block].sentences.length - 1) : 0;
+  for (let hop = 0; hop < 40; hop++) {
+    if (r.sentence > 0) { r.sentence--; break; }
+    const before = r.page + ':' + r.block;
+    if (r.block > 0) { r.block--; r.sentence = Math.max(0, (state.pages[r.page].blocks[r.block].sentences.length || 1) - 1); }
+    else if (r.page > 0) {
+      r.page--;
+      const bl = state.pages[r.page].blocks || [];
+      r.block = Math.max(0, bl.length - 1);
+      r.sentence = bl.length ? Math.max(0, bl[r.block].sentences.length - 1) : 0;
+    }
+    if (before === r.page + ':' + r.block) break; // start of document
+    const bl2 = state.pages[r.page].blocks;
+    if (!bl2 || !bl2[r.block] || !bl2[r.block].aux) break;
+    r.sentence = 0; // landed on aux — keep walking back past it
   }
+  r.flow = false;
   if (state.playing) { stopUtterance(); state.playing = true; speakCurrent(); } else refreshHighlight();
 }
 function moveBlock(dir) {
   const r = state.reading;
   if (!r) return;
-  const rec = state.pages[r.page];
-  if (dir > 0) {
-    if (rec.blocks && r.block + 1 < rec.blocks.length) { r.block++; r.sentence = 0; }
-    else if (r.page + 1 < state.pages.length) { r.page++; r.block = 0; r.sentence = 0; }
-  } else {
-    if (r.block > 0) { r.block--; r.sentence = 0; }
-    else if (r.page > 0) { r.page--; r.block = Math.max(0, (state.pages[r.page].blocks || []).length - 1); r.sentence = 0; }
+  for (let hop = 0; hop < 40; hop++) {
+    const before = r.page + ':' + r.block;
+    const rec = state.pages[r.page];
+    if (dir > 0) {
+      if (rec.blocks && r.block + 1 < rec.blocks.length) { r.block++; r.sentence = 0; }
+      else if (r.page + 1 < state.pages.length) { r.page++; r.block = 0; r.sentence = 0; }
+    } else {
+      if (r.block > 0) { r.block--; r.sentence = 0; }
+      else if (r.page > 0) { r.page--; r.block = Math.max(0, (state.pages[r.page].blocks || []).length - 1); r.sentence = 0; }
+    }
+    if (before === r.page + ':' + r.block) break; // document edge
+    const bl = state.pages[r.page].blocks;
+    if (!bl || !bl[r.block] || !bl[r.block].aux) break; // body block (or page not extracted yet)
   }
+  r.flow = false;
   if (state.playing) { stopUtterance(); state.playing = true; speakCurrent(); } else refreshHighlight();
 }
 function stopUtterance() {
