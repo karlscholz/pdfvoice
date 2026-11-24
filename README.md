@@ -38,6 +38,7 @@ cp pdfvoice.desktop ~/.local/share/applications/
 - `Space` pause/resume · `←`/`→` sentence · `↑`/`↓` paragraph (handy to skip figure captions)
 - **Voice box**: type to search (e.g. "english", "sonia"); ✦ marks natural online voices
 - **Follow** auto-scrolls to the spoken sentence, but backs off as soon as you scroll manually; **⤓ Current** jumps back and re-enables it
+- **Resume**: reopening a PDF jumps back to the sentence you were on (highlighted, `Space` continues) or your scroll position if you never played it. Keyed by URL (or filename+size for local files), capped at the 50 most recent PDFs, oldest evicted — a few KB of localStorage total. Positions survive app updates: the sentence is re-found by its text if extraction indices shift.
 - arXiv URLs paste straight into the URL box
 
 ## For AI agents (and humans) contributing here

@@ -115,7 +115,7 @@ $('voiceSel').addEventListener('keydown', e => {
 $('openBtn').onclick = () => $('fileInput').click();
 $('fileInput').onchange = e => {
   const f = e.target.files[0];
-  if (f) f.arrayBuffer().then(buf => loadPdfData(buf, f.name));
+  if (f) f.arrayBuffer().then(buf => loadPdfData(buf, f.name, 'f:' + f.name + ':' + f.size));
 };
 $('urlInput').onkeydown = e => {
   if (e.key !== 'Enter') return;
@@ -127,7 +127,7 @@ async function openUrl(url) {
   try {
     const r = await fetch(url);
     if (!r.ok) throw new Error('HTTP ' + r.status);
-    loadPdfData(await r.arrayBuffer(), url.split('/').pop() || url);
+    loadPdfData(await r.arrayBuffer(), url.split('/').pop() || url, url);
   } catch (err) {
     const isExt = location.protocol === 'chrome-extension:' || location.protocol === 'moz-extension:';
     setStatus('Could not fetch (' + err.message + ') — ' + (url.startsWith('file:')
@@ -140,11 +140,75 @@ viewer.addEventListener('dragleave', () => { $('drop') && $('drop').classList.re
 viewer.addEventListener('drop', e => {
   e.preventDefault();
   const f = e.dataTransfer.files && e.dataTransfer.files[0];
-  if (f) f.arrayBuffer().then(buf => loadPdfData(buf, f.name));
+  if (f) f.arrayBuffer().then(buf => loadPdfData(buf, f.name, 'f:' + f.name + ':' + f.size));
 });
 
-async function loadPdfData(data, name) {
+/* ---------------- resume (per-PDF position, capped LRU) ---------------- */
+let docKey = null;
+const RESUME_MAX = 50;
+function resumeAll() { return store.get('resume', {}); }
+function saveResume() {
+  if (!docKey || !state.pages.length) return;
+  const all = resumeAll();
+  const entry = all[docKey] || {};
+  const r = state.reading;
+  if (r) {
+    const b = state.pages[r.page] && state.pages[r.page].blocks && state.pages[r.page].blocks[r.block];
+    const sn = b && b.sentences[r.sentence];
+    Object.assign(entry, { page: r.page, block: r.block, sentence: r.sentence, text: sn ? sn.text.slice(0, 80) : '' });
+  }
+  entry.scrollPage = currentTopPage();
+  entry.ts = Date.now();
+  all[docKey] = entry;
+  const keys = Object.keys(all);
+  if (keys.length > RESUME_MAX) {
+    keys.sort((a, b) => (all[a].ts || 0) - (all[b].ts || 0));
+    for (const k of keys.slice(0, keys.length - RESUME_MAX)) delete all[k];
+  }
+  store.set('resume', all);
+}
+function currentTopPage() {
+  const vt = viewer.getBoundingClientRect().top;
+  for (const rec of state.pages) {
+    if (rec.wrap.getBoundingClientRect().bottom > vt + 40) return rec.num - 1;
+  }
+  return 0;
+}
+async function restoreReading(saved) {
+  const rec = state.pages[saved.page];
+  if (!rec) return;
+  for (let i = 0; i < 50 && !rec.blocks; i++) await new Promise(res => setTimeout(res, 200));
+  if (!rec.blocks || state.reading) return; // user already started reading something
+  let { block, sentence } = saved;
+  const match = (bi, si) => {
+    const sn = rec.blocks[bi] && rec.blocks[bi].sentences[si];
+    return sn && (!saved.text || sn.text.startsWith(saved.text));
+  };
+  if (!match(block, sentence) && saved.text) {
+    // extraction may have shifted indices (e.g. after an update) — find the sentence by text
+    outer:
+    for (let bi = 0; bi < rec.blocks.length; bi++)
+      for (let si = 0; si < rec.blocks[bi].sentences.length; si++)
+        if (rec.blocks[bi].sentences[si].text.startsWith(saved.text)) { block = bi; sentence = si; break outer; }
+  }
+  if (!rec.blocks[block] || !rec.blocks[block].sentences[sentence]) return;
+  state.reading = { page: saved.page, block, sentence };
+  state.playing = false;
+  state.userScrolled = true; // highlight without yanking the view
+  updateButtons();
+  refreshHighlight();
+  setStatus('Resumed where you left off — press Space or ▶ to continue.');
+}
+let scrollSaveTimer = null;
+viewer.addEventListener('scroll', () => {
+  clearTimeout(scrollSaveTimer);
+  scrollSaveTimer = setTimeout(saveResume, 1500);
+}, { passive: true });
+window.addEventListener('beforeunload', saveResume);
+
+async function loadPdfData(data, name, key) {
   stopReading();
+  docKey = key || null;
   setStatus('Loading ' + name + ' …');
   const pdf = await pdfjsLib.getDocument({ data }).promise;
   state.pdf = pdf;
@@ -178,6 +242,13 @@ async function loadPdfData(data, name) {
     extractBlocks(rec); // async, fire & forget; builds click overlays when done
   }
   setStatus('Click a paragraph to start reading.');
+
+  const saved = docKey ? resumeAll()[docKey] : null;
+  if (saved) {
+    const target = state.pages[saved.block != null ? saved.page : (saved.scrollPage || 0)];
+    if (target) requestAnimationFrame(() => target.wrap.scrollIntoView({ block: 'start' }));
+    if (saved.block != null) restoreReading(saved);
+  }
 }
 
 function sizeWrap(rec) {
@@ -460,6 +531,7 @@ function startReading(pageIdx, blockIdx, sentIdx = 0) {
   state.silentStreak = 0;
   state.playing = true;
   state.userScrolled = false;
+  saveResume();
   updateButtons();
   speakCurrent();
 }
@@ -527,6 +599,7 @@ function advance() {
   else if (rec.blocks && r.block + 1 < rec.blocks.length) { r.block++; r.sentence = 0; }
   else if (r.page + 1 < state.pages.length) { r.page++; r.block = 0; r.sentence = 0; }
   else { finish(); return; }
+  saveResume();
   if (state.playing) speakCurrent();
   else refreshHighlight();
 }
@@ -565,6 +638,7 @@ function stopUtterance() {
 function pauseReading() {
   state.playing = false;
   stopUtterance();
+  saveResume();
   updateButtons();
 }
 function resumeReading() {
@@ -575,6 +649,7 @@ function resumeReading() {
 }
 function stopReading() {
   state.playing = false;
+  saveResume();
   state.reading = null;
   stopUtterance();
   refreshHighlight();
