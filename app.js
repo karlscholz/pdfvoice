@@ -21,59 +21,95 @@ const state = {
   silentStreak: 0,
 };
 
-/* ---------------- voices (searchable) ---------------- */
+/* ---------------- voices (searchable custom dropdown) ---------------- */
 let voices = [];
-const displayToName = new Map();
-function voiceDisplay(v) {
-  let d = v.name.replace(/^Microsoft /, '').replace(/ Online \(Natural\)/, ' ✦');
-  while (displayToName.has(d) && displayToName.get(d) !== v.name) d += ' ·';
-  return d;
-}
+let chosenVoiceName = store.get('voice', null);
+const vDisp = v => v.name.replace(/^Microsoft /, '').replace(/ Online \(Natural\)/, ' ✦');
+const isNat = v => /Online.*Natural/i.test(v.name);
 function currentVoice() {
-  const val = $('voiceSel').value.trim();
-  const byDisplay = displayToName.get(val);
-  if (byDisplay) return voices.find(v => v.name === byDisplay);
-  const q = val.toLowerCase();
-  return voices.find(v => v.name === val) ||
-    voices.filter(v => /Online.*Natural/i.test(v.name)).find(v => v.name.toLowerCase().includes(q)) ||
-    voices.find(v => v.name.toLowerCase().includes(q)) || null;
+  return voices.find(v => v.name === chosenVoiceName) || null;
+}
+function defaultVoice() {
+  return voices.find(v => /Sonia Online \(Natural\).*English \(United Kingdom\)/.test(v.name)) ||
+    voices.find(v => isNat(v) && /English \(United Kingdom\)/.test(v.name)) ||
+    voices.find(v => isNat(v) && /English \(United States\)/.test(v.name)) ||
+    voices.find(v => isNat(v) && v.lang.startsWith('en')) ||
+    voices.find(v => v.lang.startsWith('en')) || voices[0] || null;
+}
+function syncVoiceBox() {
+  const v = currentVoice();
+  if (v && document.activeElement !== $('voiceSel')) $('voiceSel').value = vDisp(v);
 }
 function refreshVoices() {
   voices = speechSynthesis.getVoices();
   if (!voices.length) return;
-  const dl = $('voiceList');
-  dl.innerHTML = '';
-  displayToName.clear();
-  const isNat = v => /Online.*Natural/i.test(v.name) ? 0 : 1;
-  const sorted = [...voices].sort((a, b) => isNat(a) - isNat(b) || a.name.localeCompare(b.name));
-  for (const v of sorted) {
-    const d = voiceDisplay(v);
-    displayToName.set(d, v.name);
-    const o = document.createElement('option');
-    o.value = d;
-    dl.appendChild(o);
+  if (!currentVoice()) {
+    const d = defaultVoice();
+    if (d) chosenVoiceName = d.name;
   }
-  const saved = store.get('voice', null);
-  const def =
-    (saved && voices.find(v => v.name === saved)) ||
-    sorted.find(v => isNat(v) === 0 && /English \(United (States|Kingdom)\)/.test(v.name)) ||
-    sorted.find(v => isNat(v) === 0 && v.lang.startsWith('en')) ||
-    voices.find(v => v.lang.startsWith('en')) || voices[0];
-  if (def && document.activeElement !== $('voiceSel')) {
-    for (const [d, n] of displayToName) if (n === def.name) { $('voiceSel').value = d; break; }
-  }
+  syncVoiceBox();
 }
 speechSynthesis.onvoiceschanged = refreshVoices;
 refreshVoices();
-$('voiceSel').onchange = () => {
-  const v = currentVoice();
-  if (!v) { setStatus('No voice matches “' + $('voiceSel').value + '” — type e.g. a language or name.'); return; }
-  for (const [d, n] of displayToName) if (n === v.name) { $('voiceSel').value = d; break; }
+
+const drop = $('voiceDrop');
+let dropItems = [], dropSel = -1;
+function renderDrop(filter) {
+  const q = (filter || '').trim().toLowerCase();
+  dropItems = voices
+    .filter(v => !q || v.name.toLowerCase().includes(q) || v.lang.toLowerCase().includes(q))
+    .sort((a, b) => (isNat(b) - isNat(a)) || a.name.localeCompare(b.name));
+  dropSel = -1;
+  drop.innerHTML = '';
+  if (!dropItems.length) { drop.style.display = 'none'; return; }
+  let lastNat = null;
+  dropItems.forEach((v, i) => {
+    if (isNat(v) !== lastNat) {
+      lastNat = isNat(v);
+      const h = document.createElement('div');
+      h.className = 'vhead';
+      h.textContent = lastNat ? 'Natural (online)' : 'Local';
+      drop.appendChild(h);
+    }
+    const d = document.createElement('div');
+    d.className = 'vopt';
+    d.textContent = vDisp(v);
+    if (v.name === chosenVoiceName) d.classList.add('sel');
+    d.dataset.i = i;
+    // mousedown (not click) so it fires before the input's blur hides the list
+    d.addEventListener('mousedown', e => { e.preventDefault(); commitVoice(v); });
+    drop.appendChild(d);
+  });
+  drop.style.display = 'block';
+}
+function commitVoice(v) {
+  chosenVoiceName = v.name;
   store.set('voice', v.name);
+  drop.style.display = 'none';
   $('voiceSel').blur();
+  $('voiceSel').value = vDisp(v);
   if (state.playing) { stopUtterance(); state.playing = true; speakCurrent(); }
-};
-$('voiceSel').onfocus = () => $('voiceSel').select();
+}
+$('voiceSel').addEventListener('focus', () => { $('voiceSel').select(); renderDrop(''); });
+$('voiceSel').addEventListener('input', () => renderDrop($('voiceSel').value));
+$('voiceSel').addEventListener('blur', () => setTimeout(() => { drop.style.display = 'none'; syncVoiceBox(); }, 120));
+$('voiceSel').addEventListener('keydown', e => {
+  const opts = [...drop.querySelectorAll('.vopt')];
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+    e.preventDefault(); e.stopPropagation();
+    if (!opts.length) return;
+    dropSel = (dropSel + (e.key === 'ArrowDown' ? 1 : -1) + opts.length) % opts.length;
+    opts.forEach((o, i) => o.classList.toggle('sel', i === dropSel));
+    opts[dropSel].scrollIntoView({ block: 'nearest' });
+  } else if (e.key === 'Enter') {
+    e.preventDefault();
+    const idx = dropSel >= 0 ? +opts[dropSel].dataset.i : (dropItems.length ? 0 : -1);
+    if (idx >= 0) commitVoice(dropItems[idx]);
+  } else if (e.key === 'Escape') {
+    drop.style.display = 'none';
+    $('voiceSel').blur();
+  }
+});
 
 /* ---------------- loading ---------------- */
 $('openBtn').onclick = () => $('fileInput').click();

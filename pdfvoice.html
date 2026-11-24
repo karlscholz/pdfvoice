@@ -26,7 +26,17 @@
   button:disabled { opacity: 0.4; cursor: default; }
   button.active { background: var(--accent); color: #082036; border-color: var(--accent); }
   input[type=text] { cursor: text; width: 230px; }
+  #voiceWrap { position: relative; display: inline-block; }
   #voiceSel { width: 250px; }
+  #voiceDrop {
+    position: absolute; top: calc(100% + 4px); left: 0; z-index: 50;
+    min-width: 360px; max-height: 50vh; overflow-y: auto; display: none; text-align: left;
+    background: var(--panel2); border: 1px solid #44474f; border-radius: 8px;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.55);
+  }
+  #voiceDrop .vopt { padding: 5px 12px; cursor: pointer; white-space: nowrap; font-size: 13px; }
+  #voiceDrop .vopt:hover, #voiceDrop .vopt.sel { background: var(--accent); color: #082036; }
+  #voiceDrop .vhead { padding: 6px 12px 2px; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
   input[type=range] { accent-color: var(--accent); }
   .sep { width: 1px; align-self: stretch; background: #44474f; margin: 0 2px; }
   #rateVal { color: var(--muted); min-width: 34px; display: inline-block; text-align: right; }
@@ -66,8 +76,10 @@
   <button id="playBtn" title="Play / pause (Space)" disabled>▶</button>
   <button id="stopBtn" title="Stop" disabled>⏹</button>
   <span class="sep"></span>
-  <input type="text" id="voiceSel" list="voiceList" placeholder="voice — type to search" title="Voice — type to search, e.g. ‘english’ or ‘sonia’">
-  <datalist id="voiceList"></datalist>
+  <span id="voiceWrap">
+    <input type="text" id="voiceSel" placeholder="voice — type to search" title="Voice — type to search, e.g. ‘english’ or ‘sonia’" autocomplete="off">
+    <div id="voiceDrop"></div>
+  </span>
   <input type="range" id="rate" min="0.6" max="2" step="0.1" value="1.1" title="Speed">
   <span id="rateVal">1.1×</span>
   <span class="sep"></span>
