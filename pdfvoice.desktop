@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=PDF Voice
+Comment=Click a paragraph, hear it read aloud (natural voices)
+Exec=/usr/bin/microsoft-edge --app=file:///home/YOUR_USER/.local/share/pdfvoice/pdfvoice.html
+Icon=audio-headphones
+Terminal=false
+Categories=Office;Viewer;Audio;
