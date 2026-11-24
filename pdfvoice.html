@@ -47,9 +47,23 @@
     box-shadow: 0 2px 10px rgba(0,0,0,0.6); text-align: left;
   }
   .pageWrap canvas { display: block; }
-  .blk { position: absolute; cursor: pointer; border-radius: 3px; }
+  .blk { position: absolute; cursor: pointer; border-radius: 3px; z-index: 4; }
   .blk:hover { outline: 2px solid var(--blkhover); background: rgba(77,163,255,0.08); }
-  .hlrect { position: absolute; background: var(--hl); mix-blend-mode: multiply; border-radius: 2px; pointer-events: none; }
+  .hlrect { position: absolute; background: var(--hl); mix-blend-mode: multiply; border-radius: 2px; pointer-events: none; z-index: 2; }
+
+  #modeSwitch { display: inline-flex; border: 1px solid #44474f; border-radius: 6px; overflow: hidden; }
+  #modeSwitch button { border: 0; border-radius: 0; padding: 5px 10px; }
+  #modeSwitch button.active { background: var(--accent); color: #082036; }
+
+  .textLayer { position: absolute; inset: 0; overflow: hidden; line-height: 1; z-index: 1; }
+  .textLayer :is(span, br) { color: transparent; position: absolute; white-space: pre; transform-origin: 0 0; cursor: text; }
+  .textLayer span::selection { background: rgba(77, 163, 255, 0.35); }
+  .linkLayer { position: absolute; inset: 0; z-index: 3; pointer-events: none; }
+  .linkLayer a { position: absolute; border-radius: 2px; }
+  body[data-mode=mouse] .blk { pointer-events: none; }
+  body[data-mode=mouse] .linkLayer a { pointer-events: auto; }
+  body[data-mode=mouse] .linkLayer a:hover { outline: 1.5px solid var(--accent); background: rgba(77, 163, 255, 0.12); }
+  body[data-mode=ear] .textLayer { pointer-events: none; user-select: none; }
   .pageNum { position: absolute; right: -8px; top: 0; transform: translateX(100%); color: var(--muted); font-size: 12px; }
 
   #statusbar {
@@ -70,6 +84,10 @@
 </head>
 <body>
 <div id="topbar">
+  <span id="modeSwitch" title="Ear: click text to listen · Mouse: select/copy text and click links">
+    <button id="modeEar">👂</button><button id="modeMouse">🖱️</button>
+  </span>
+  <span class="sep"></span>
   <button id="openBtn" title="Open a PDF file">📂 Open</button>
   <input type="text" id="urlInput" placeholder="…or paste a PDF URL and press Enter">
   <span class="sep"></span>

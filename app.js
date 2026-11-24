@@ -229,13 +229,17 @@ async function loadPdfData(data, name, key) {
     wrap.className = 'pageWrap';
     wrap.dataset.page = n;
     const canvas = document.createElement('canvas');
+    const textLayer = document.createElement('div');
+    textLayer.className = 'textLayer';
     const hlLayer = document.createElement('div');
-    hlLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;';
+    hlLayer.style.cssText = 'position:absolute;inset:0;pointer-events:none;z-index:2;';
+    const linkLayer = document.createElement('div');
+    linkLayer.className = 'linkLayer';
     const num = document.createElement('span');
     num.className = 'pageNum'; num.textContent = n;
-    wrap.append(canvas, hlLayer, num);
+    wrap.append(canvas, textLayer, hlLayer, linkLayer, num);
     viewer.appendChild(wrap);
-    const rec = { num: n, page, vp1: { width: vp1.width, height: vp1.height }, blocks: null, wrap, canvas, hlLayer, renderedScale: 0, rendering: false };
+    const rec = { num: n, page, vp1: { width: vp1.width, height: vp1.height }, blocks: null, wrap, canvas, textLayer, hlLayer, linkLayer, renderedScale: 0, rendering: false };
     state.pages.push(rec);
     sizeWrap(rec);
     observer.observe(wrap);
@@ -276,10 +280,48 @@ async function renderPage(rec) {
     await rec.page.render({ canvasContext: rec.canvas.getContext('2d'), viewport: vp }).promise;
     rec.renderedScale = state.scale;
     positionOverlays(rec);
+    await renderSelectionLayers(rec);
   } finally {
     rec.rendering = false;
     if (rec.renderedScale !== state.scale) renderPage(rec); // scale changed meanwhile
   }
+}
+
+// selectable text + clickable links (used in mouse mode)
+async function renderSelectionLayers(rec) {
+  const vp = rec.page.getViewport({ scale: state.scale });
+  rec.textLayer.innerHTML = '';
+  rec.textLayer.style.setProperty('--scale-factor', vp.scale);
+  try {
+    const tc = rec.textContent || (rec.textContent = await rec.page.getTextContent());
+    await pdfjsLib.renderTextLayer({ textContentSource: tc, container: rec.textLayer, viewport: vp }).promise;
+  } catch (e) {}
+  rec.linkLayer.innerHTML = '';
+  try {
+    const annots = rec.annots || (rec.annots = await rec.page.getAnnotations());
+    for (const a of annots) {
+      if (a.subtype !== 'Link' || (!a.url && !a.dest)) continue;
+      const r = vp.convertToViewportRectangle(a.rect);
+      const el = document.createElement('a');
+      el.style.cssText = `left:${Math.min(r[0], r[2])}px;top:${Math.min(r[1], r[3])}px;width:${Math.abs(r[2] - r[0])}px;height:${Math.abs(r[3] - r[1])}px;`;
+      if (a.url) {
+        el.href = a.url; el.target = '_blank'; el.rel = 'noopener'; el.title = a.url;
+      } else {
+        el.href = '#';
+        el.title = 'Go to destination';
+        el.onclick = async e => {
+          e.preventDefault();
+          try {
+            const dest = typeof a.dest === 'string' ? await state.pdf.getDestination(a.dest) : a.dest;
+            const idx = await state.pdf.getPageIndex(dest[0]);
+            state.userScrolled = true;
+            state.pages[idx].wrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
+          } catch (err) {}
+        };
+      }
+      rec.linkLayer.appendChild(el);
+    }
+  } catch (e) {}
 }
 
 function setScale(s) {
@@ -297,7 +339,7 @@ $('zoomOut').onclick = () => setScale(state.scale / 1.15);
 
 /* ---------------- text extraction ---------------- */
 async function extractBlocks(rec) {
-  const tc = await rec.page.getTextContent();
+  const tc = rec.textContent || (rec.textContent = await rec.page.getTextContent());
   const vp = rec.page.getViewport({ scale: 1 });
   // items -> positioned runs
   const runs = [];
@@ -713,6 +755,17 @@ document.addEventListener('keydown', e => {
 
 window.addEventListener('beforeunload', stopUtterance);
 updateButtons();
+
+/* ---------------- ear / mouse mode ---------------- */
+function setMode(m) {
+  store.set('mode', m);
+  document.body.dataset.mode = m;
+  $('modeEar').classList.toggle('active', m === 'ear');
+  $('modeMouse').classList.toggle('active', m === 'mouse');
+}
+$('modeEar').onclick = () => setMode('ear');
+$('modeMouse').onclick = () => setMode('mouse');
+setMode(store.get('mode', 'ear'));
 
 // optional ?file= URL
 const qp = new URLSearchParams(location.search).get('file');
