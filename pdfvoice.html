@@ -69,8 +69,10 @@
 
   #statusbar {
     position: fixed; left: 0; right: 0; bottom: 0; background: var(--panel);
-    border-top: 1px solid #000; padding: 8px 14px; display: flex; align-items: center; gap: 12px; z-index: 10;
+    border-top: 1px solid #000; padding: 8px 14px; display: none; align-items: center; gap: 12px; z-index: 10;
   }
+  body.showstatus #statusbar { display: flex; }
+  #statusBtn { margin-left: auto; }
   #nowReading { flex: 1; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-style: italic; }
   #nowReading.active { color: var(--text); }
 
@@ -107,6 +109,7 @@
   <span class="sep"></span>
   <button id="zoomOut" title="Zoom out">−</button>
   <button id="zoomIn" title="Zoom in">+</button>
+  <button id="statusBtn" title="Show the bottom bar with the sentence being read">💬</button>
   <input type="file" id="fileInput" accept="application/pdf,.pdf" hidden>
 </div>
 

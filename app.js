@@ -16,6 +16,7 @@ const state = {
   reading: null,      // {page, block, sentence}
   playing: false,
   follow: store.get('follow', true),
+  statusbar: store.get('statusbar', false),
   utter: null,
   silentStreak: 0,
 };
@@ -770,9 +771,20 @@ function updateButtons() {
   $('jumpBtn').disabled = !state.reading;
   $('followBtn').classList.toggle('active', state.follow);
 }
+let statusFlashTimer = null;
 function setStatus(msg) {
   $('nowReading').classList.remove('active');
   $('nowReading').textContent = msg;
+  if (!state.statusbar) { // bar hidden: flash the message briefly so feedback isn't lost
+    clearTimeout(statusFlashTimer);
+    document.body.classList.add('showstatus');
+    statusFlashTimer = setTimeout(() => { if (!state.statusbar) document.body.classList.remove('showstatus'); }, 5000);
+  }
+}
+function applyStatusBar() {
+  clearTimeout(statusFlashTimer);
+  document.body.classList.toggle('showstatus', state.statusbar);
+  $('statusBtn').classList.toggle('active', state.statusbar);
 }
 
 /* ---------------- controls ---------------- */
@@ -797,6 +809,12 @@ $('followBtn').onclick = () => {
   refreshHighlight();
 };
 $('jumpBtn').onclick = () => scrollToCurrent(true);
+$('statusBtn').onclick = () => {
+  state.statusbar = !state.statusbar;
+  store.set('statusbar', state.statusbar);
+  applyStatusBar();
+};
+applyStatusBar();
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
