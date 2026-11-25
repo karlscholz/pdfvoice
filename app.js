@@ -16,7 +16,6 @@ const state = {
   reading: null,      // {page, block, sentence}
   playing: false,
   follow: store.get('follow', true),
-  userScrolled: false,
   utter: null,
   silentStreak: 0,
 };
@@ -194,9 +193,9 @@ async function restoreReading(saved) {
   if (!rec.blocks[block] || !rec.blocks[block].sentences[sentence]) return;
   state.reading = { page: saved.page, block, sentence };
   state.playing = false;
-  state.userScrolled = true; // highlight without yanking the view
   updateButtons();
   refreshHighlight();
+  scrollToCurrent(true);
   setStatus('Resumed where you left off — press Space or ▶ to continue.');
 }
 let scrollSaveTimer = null;
@@ -314,7 +313,6 @@ async function renderSelectionLayers(rec) {
           try {
             const dest = typeof a.dest === 'string' ? await state.pdf.getDestination(a.dest) : a.dest;
             const idx = await state.pdf.getPageIndex(dest[0]);
-            state.userScrolled = true;
             state.pages[idx].wrap.scrollIntoView({ block: 'start', behavior: 'smooth' });
           } catch (err) {}
         };
@@ -588,10 +586,27 @@ function refreshHighlight() {
   }
   $('nowReading').textContent = sn.text;
   $('nowReading').classList.add('active');
-  if (state.follow && !state.userScrolled) {
-    const first = rec.hlLayer.firstChild;
-    if (first) first.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  if (state.follow) scrollToCurrent(false);
+}
+
+// Bring the highlighted sentence on screen. force=true always centers it;
+// otherwise the view only moves when the highlight is not fully visible.
+function scrollToCurrent(force) {
+  const r = state.reading;
+  if (!r) return;
+  const rec = state.pages[r.page];
+  if (!rec || !rec.hlLayer.firstChild) return;
+  if (!force) {
+    const vr = viewer.getBoundingClientRect();
+    let top = Infinity, bot = -Infinity;
+    for (const el of rec.hlLayer.children) {
+      const b = el.getBoundingClientRect();
+      top = Math.min(top, b.top); bot = Math.max(bot, b.bottom);
+    }
+    const pad = 8;
+    if (top >= vr.top + pad && bot <= vr.bottom - pad) return; // fully visible, don't move
   }
+  rec.hlLayer.firstChild.scrollIntoView({ block: 'center', behavior: 'smooth' });
 }
 
 /* ---------------- reading engine ---------------- */
@@ -601,7 +616,6 @@ function startReading(pageIdx, blockIdx, sentIdx = 0) {
   state.reading = { page: pageIdx, block: blockIdx, sentence: sentIdx, flow: false };
   state.silentStreak = 0;
   state.playing = true;
-  state.userScrolled = false;
   saveResume();
   updateButtons();
   speakCurrent();
@@ -779,23 +793,18 @@ $('rateVal').textContent = parseFloat($('rate').value).toFixed(1) + '×';
 $('followBtn').onclick = () => {
   state.follow = !state.follow;
   store.set('follow', state.follow);
-  if (state.follow) state.userScrolled = false;
   updateButtons();
   refreshHighlight();
 };
-$('jumpBtn').onclick = () => { state.userScrolled = false; refreshHighlight(); };
-
-// manual scroll disables follow until "Current" pressed (reading itself is never affected)
-for (const evt of ['wheel', 'touchmove']) viewer.addEventListener(evt, () => { state.userScrolled = true; }, { passive: true });
+$('jumpBtn').onclick = () => scrollToCurrent(true);
 
 document.addEventListener('keydown', e => {
   if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
   if (e.code === 'Space') { e.preventDefault(); $('playBtn').onclick(); }
   else if (e.key === 'ArrowRight') { e.preventDefault(); if (state.reading) { stopUtterance(); advance(); } }
   else if (e.key === 'ArrowLeft') { e.preventDefault(); retreat(); }
-  else if (e.key === 'ArrowDown') { e.preventDefault(); if (state.reading) moveBlock(1); else state.userScrolled = true; }
-  else if (e.key === 'ArrowUp') { e.preventDefault(); if (state.reading) moveBlock(-1); else state.userScrolled = true; }
-  else if (['PageDown', 'PageUp', 'Home', 'End'].includes(e.key)) state.userScrolled = true;
+  else if (e.key === 'ArrowDown' && state.reading) { e.preventDefault(); moveBlock(1); }
+  else if (e.key === 'ArrowUp' && state.reading) { e.preventDefault(); moveBlock(-1); }
 });
 
 window.addEventListener('beforeunload', stopUtterance);
