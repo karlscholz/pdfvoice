@@ -12,7 +12,7 @@
     "service_worker": "background.js",
     "scripts": ["background.js"]
   },
-  "permissions": ["activeTab"],
+  "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["http://*/*", "https://*/*", "file:///*"],
   "browser_specific_settings": {
     "gecko": { "id": "pdfvoice@karlscholz.github.io", "strict_min_version": "128.0" }

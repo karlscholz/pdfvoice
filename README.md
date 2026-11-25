@@ -8,7 +8,7 @@ One codebase, three ways to use it:
 
 | Mode | What it is |
 |---|---|
-| **Browser extension** (Edge/Chromium + Firefox) | Toolbar button: opens the PDF from the current tab in the viewer. Extension pages may fetch cross-origin, so any PDF URL works. |
+| **Browser extension** (Edge/Chromium + Firefox) | Toolbar button: opens the PDF from the current tab in the viewer. Extension pages may fetch cross-origin, so any PDF URL works. On a normal website the same button toggles **website mode** instead: read the page in place. |
 | **Standalone app** | `pdfvoice.desktop` opens `pdfvoice.html` as an Edge app window ("PDF Voice" in the app grid). Remote URLs limited by CORS (arXiv works); local files via 📂/drag-drop. |
 | **Plain page** | Open `pdfvoice.html` in any browser. |
 
@@ -41,6 +41,21 @@ cp pdfvoice.desktop ~/.local/share/applications/
 - **💬** (top right) shows the bottom bar with the sentence being read — hidden by default since the yellow highlight already marks it; status messages flash it briefly either way
 - **Resume**: reopening a PDF jumps back to the sentence you were on (highlighted, `Space` continues) or your scroll position if you never played it. Keyed by URL (or filename+size for local files), capped at the 50 most recent PDFs, oldest evicted — a few KB of localStorage total. Positions survive app updates: the sentence is re-found by its text if extraction indices shift.
 - arXiv URLs paste straight into the URL box
+
+## Website mode
+
+Hit the toolbar button on any article-shaped page (blog post, docs, news) and it
+reads the page right where it is — no reader view, nothing re-rendered:
+
+- **Click a paragraph** → reads from that sentence onward, same keys as the viewer
+- The sentence highlight uses the CSS Custom Highlight API, so the page's DOM is
+  never touched: **links, buttons, demos and other interactive things keep
+  working** — clicks on them pass straight through and never start reading
+- A small floating bar (top right) has play/pause, voice, speed, Follow and ✕;
+  hitting the toolbar button again also closes it
+- Nav bars, footers and link-heavy furniture are skipped by auto-flow, same as
+  captions in PDFs — clicking them still reads them
+- Web apps and feeds won't extract meaningfully; this is for pages you'd read
 
 ## For AI agents (and humans) contributing here
 
